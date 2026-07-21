@@ -1,0 +1,77 @@
+name: Token Data Collection
+
+on:
+  schedule:
+    # Every hour at minute 5
+    - cron: '5 * * * *'
+  workflow_dispatch:  # manual trigger
+  push:
+    branches: [main]
+    paths:
+      - 'token-data/**'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r token-data/requirements.txt
+
+      - name: Run collector
+        id: collect
+        env:
+          CMC_API_KEY: ${{ secrets.CMC_API_KEY }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          cd token-data
+          python collector.py
+          python validator.py
+
+      - name: Push to Cloudflare KV
+        id: push
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          cd token-data
+          python -c "
+import json, sys
+from reporter import push_to_kv, generate_markdown_summary
+data = json.load(open('data/merged_latest.json'))
+from validator import validate
+validated = validate(data)
+ok = push_to_kv(validated)
+if not ok:
+    print('FAILED to push to KV')
+    sys.exit(1)
+summary = generate_markdown_summary(validated)
+print(summary)
+# Save summary for later steps
+open('data/summary.md', 'w').write(summary)
+"
+
+      - name: Commit snapshots
+        run: |
+          git config user.name "token-data-bot"
+          git config user.email "bot@token-data-collector"
+          git add token-data/data/
+          git diff --cached --quiet || git commit -m "chore(data): auto-collect $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push
+        continue-on-error: true  # push may fail if no changes
+
+      - name: Post summary to job summary
+        run: |
+          if [ -f token-data/data/summary.md ]; then
+            cat token-data/data/summary.md >> $GITHUB_STEP_SUMMARY
+          fi

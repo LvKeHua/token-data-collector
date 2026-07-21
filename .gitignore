@@ -1,0 +1,17 @@
+# Token Data Collector .gitignore
+
+# API keys should never be committed
+.env
+*.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Data snapshots (committed to track history)
+# data/ is intentionally NOT ignored — we want history
+
+# OS files
+.DS_Store
+Thumbs.db
